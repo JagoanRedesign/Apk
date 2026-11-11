@@ -17,96 +17,115 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build DLMS Mini APK
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Download repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract Android project
+      # 2. Extract Android project
+      - name: Extract project ZIP
         shell: bash
         run: |
           set -e
 
-          echo "Checking project files..."
-          ls -lah
-
-          ZIP_FILE=""
-
-          if [ -f "dlms_work.zip" ]; then
-            ZIP_FILE="dlms_work.zip"
-          else
-            ZIP_FILE=$(find . -maxdepth 3 -name "*.zip" | head -n 1)
-          fi
-
-          if [ -n "$ZIP_FILE" ]; then
-            echo "Extracting: $ZIP_FILE"
-            mkdir -p extracted
-            unzip -oq "$ZIP_FILE" -d extracted
-          fi
-
-          echo "Searching for Gradle wrapper..."
-
-          GRADLE_FILE=$(find . -type f -name gradlew \
-            -not -path "./.git/*" | head -n 1)
-
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERROR: gradlew tidak ditemukan."
-            echo "Isi repository:"
-            find . -maxdepth 5 -type f | head -n 200
+          if [ ! -f "dlms_work.zip" ]; then
+            echo "ERROR: dlms_work.zip tidak ditemukan"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$GRADLE_FILE")
-          PROJECT_DIR=$(realpath "$PROJECT_DIR")
+          mkdir -p extracted
 
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          unzip -oq dlms_work.zip -d extracted
 
-          echo "Android project found:"
-          echo "$PROJECT_DIR"
+          echo "Project extracted:"
+          find extracted -maxdepth 3 -type f | sort
 
-          ls -lah "$PROJECT_DIR"
+          if [ ! -f "extracted/dlms_work/settings.gradle.kts" ]; then
+            echo "ERROR: settings.gradle.kts tidak ditemukan"
+            exit 1
+          fi
 
-      - name: Setup Java
+          if [ ! -f "extracted/dlms_work/app/build.gradle.kts" ]; then
+            echo "ERROR: app/build.gradle.kts tidak ditemukan"
+            exit 1
+          fi
+
+      # 3. Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
+      # 4. Install Gradle 8.9
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      # 5. Setup Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      # 6. Install SDK packages
       - name: Install Android SDK packages
         run: |
           sdkmanager --install "platform-tools"
           sdkmanager --install "platforms;android-35"
           sdkmanager --install "build-tools;35.0.0"
 
-      - name: Grant execute permission
-        working-directory: ${{ env.PROJECT_DIR }}
+      # 7. Generate Gradle Wrapper
+      - name: Generate Gradle Wrapper
+        working-directory: extracted/dlms_work
+        run: |
+          gradle wrapper \
+            --gradle-version 8.9 \
+            --distribution-type bin
+
+      # 8. Grant permission
+      - name: Grant Gradle permission
+        working-directory: extracted/dlms_work
         run: chmod +x gradlew
 
-      - name: Build debug APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      # 9. Verify configuration
+      - name: Verify Gradle
+        working-directory: extracted/dlms_work
         run: |
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          ./gradlew --version
 
-      - name: Locate APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      # 10. Build APK
+      - name: Build Debug APK
+        working-directory: extracted/dlms_work
         run: |
-          find . -type f -name "*.apk"
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            clean \
+            assembleDebug
 
-          if ! find . -type f -path "*/outputs/apk/*" \
-            -name "*.apk" | grep -q .; then
-            echo "ERROR: APK tidak ditemukan."
+      # 11. Verify APK
+      - name: Verify APK
+        working-directory: extracted/dlms_work
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK tidak berhasil dibuat"
+            find . -type f -name "*.apk"
             exit 1
           fi
 
-      - name: Upload APK
+          echo "APK successfully generated"
+          ls -lh "$APK"
+
+      # 12. Upload APK
+      - name: Upload DLMS Mini APK
         uses: actions/upload-artifact@v4
         with:
           name: DLMS-Mini-APK
-          path: ${{ env.PROJECT_DIR }}/**/build/outputs/apk/**/*.apk
+          path: extracted/dlms_work/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
