@@ -1,59 +1,88 @@
+
 name: Build DLMS Mini APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: android-build-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     name: Build debug APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK
+        run: |
+          sdkmanager --install "platform-tools"
+          sdkmanager --install "platforms;android-35"
+          sdkmanager --install "build-tools;35.0.0"
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.9'
+      - name: Grant execute permission
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
 
-      # The source ZIP did not contain gradlew/gradle-wrapper.jar.
-      # Generate a reproducible wrapper before invoking the project build.
-      - name: Generate Gradle Wrapper
-        run: gradle wrapper --gradle-version 8.9 --distribution-type bin
+      - name: Check project files
+        run: |
+          echo "Project directory:"
+          ls -la
+
+          echo "Gradle files:"
+          find . -maxdepth 3 \
+            \( -name "settings.gradle" \
+            -o -name "settings.gradle.kts" \
+            -o -name "build.gradle" \
+            -o -name "build.gradle.kts" \)
 
       - name: Build debug APK
-        run: ./gradlew --no-daemon --stacktrace clean assembleDebug
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew --no-daemon --stacktrace assembleDebug
+          else
+            echo "ERROR: gradlew tidak ditemukan."
+            exit 1
+          fi
 
-      - name: Verify APK exists
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+      - name: Find APK
+        run: |
+          echo "APK hasil build:"
+          find . -type f -name "*.apk"
+
+          if ! find . -type f \
+            -path "*/build/outputs/apk/*" \
+            -name "*.apk" | grep -q .; then
+            echo "ERROR: APK tidak ditemukan."
+            exit 1
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dlms-mini-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: DLMS-Mini-APK
+          path: "**/build/outputs/apk/**/*.apk"
           if-no-files-found: error
           retention-days: 14
