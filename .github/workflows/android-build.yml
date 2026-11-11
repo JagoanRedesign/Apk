@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   build:
     name: Build DLMS Mini APK
@@ -25,33 +29,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Extract Android project
-      - name: Extract project ZIP
+      # 2. Extract project
+      - name: Extract Android project
         shell: bash
         run: |
           set -e
-
-          if [ ! -f "dlms_work.zip" ]; then
-            echo "ERROR: dlms_work.zip tidak ditemukan"
-            exit 1
-          fi
 
           mkdir -p extracted
 
           unzip -oq dlms_work.zip -d extracted
 
-          echo "Project extracted:"
-          find extracted -maxdepth 3 -type f | sort
+          PROJECT_DIR="extracted/dlms_work"
 
-          if [ ! -f "extracted/dlms_work/settings.gradle.kts" ]; then
+          if [ ! -f "$PROJECT_DIR/settings.gradle.kts" ]; then
             echo "ERROR: settings.gradle.kts tidak ditemukan"
             exit 1
           fi
 
-          if [ ! -f "extracted/dlms_work/app/build.gradle.kts" ]; then
+          if [ ! -f "$PROJECT_DIR/app/build.gradle.kts" ]; then
             echo "ERROR: app/build.gradle.kts tidak ditemukan"
             exit 1
           fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       # 3. Setup Java
       - name: Setup Java 17
@@ -60,24 +60,39 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 4. Install Gradle 8.9
+      # 4. Check Android SDK
+      - name: Check Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+          if [ ! -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "ERROR: sdkmanager tidak ditemukan"
+            find "$ANDROID_HOME/cmdline-tools" -name sdkmanager
+            exit 1
+          fi
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --version
+
+      # 5. Accept SDK licenses
+      - name: Accept Android SDK licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+      # 6. Install Android SDK
+      - name: Install Android SDK packages
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            --install "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      # 7. Setup Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      # 5. Setup Android SDK
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # 6. Install SDK packages
-      - name: Install Android SDK packages
-        run: |
-          sdkmanager --install "platform-tools"
-          sdkmanager --install "platforms;android-35"
-          sdkmanager --install "build-tools;35.0.0"
-
-      # 7. Generate Gradle Wrapper
+      # 8. Generate Gradle Wrapper
       - name: Generate Gradle Wrapper
         working-directory: extracted/dlms_work
         run: |
@@ -85,18 +100,17 @@ jobs:
             --gradle-version 8.9 \
             --distribution-type bin
 
-      # 8. Grant permission
+      # 9. Grant permission
       - name: Grant Gradle permission
         working-directory: extracted/dlms_work
         run: chmod +x gradlew
 
-      # 9. Verify configuration
+      # 10. Verify Gradle
       - name: Verify Gradle
         working-directory: extracted/dlms_work
-        run: |
-          ./gradlew --version
+        run: ./gradlew --version
 
-      # 10. Build APK
+      # 11. Build APK
       - name: Build Debug APK
         working-directory: extracted/dlms_work
         run: |
@@ -106,23 +120,22 @@ jobs:
             clean \
             assembleDebug
 
-      # 11. Verify APK
+      # 12. Verify APK
       - name: Verify APK
         working-directory: extracted/dlms_work
         run: |
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ERROR: APK tidak berhasil dibuat"
+            echo "ERROR: APK tidak ditemukan"
             find . -type f -name "*.apk"
             exit 1
           fi
 
-          echo "APK successfully generated"
           ls -lh "$APK"
 
-      # 12. Upload APK
-      - name: Upload DLMS Mini APK
+      # 13. Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: DLMS-Mini-APK
