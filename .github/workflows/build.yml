@@ -28,36 +28,40 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Use the SDK already installed on the GitHub-hosted runner.
-      # Do not use android-actions/setup-android@v3 here: its setup step
-      # can request the obsolete SDK package named "tools".
+      # sdkmanager berada di direktori SDK milik runner.
+      # Jangan chmod file SDK: direktori tersebut dapat bersifat read-only.
+      # Jalankan skrip sdkmanager melalui bash.
       - name: Locate Android SDK manager
         shell: bash
         run: |
           set -euo pipefail
-          test -d "$ANDROID_HOME" || { echo "Android SDK not found: $ANDROID_HOME"; exit 1; }
+          test -d "$ANDROID_HOME" || { echo "Android SDK tidak ditemukan: $ANDROID_HOME"; exit 1; }
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
-            echo "sdkmanager tidak ditemukan di $ANDROID_HOME/cmdline-tools"
-            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager 2>/dev/null || true
+            echo "sdkmanager tidak ditemukan."
+            find "$ANDROID_HOME" -maxdepth 6 -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
-          chmod +x "$SDKMANAGER"
           echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          "$SDKMANAGER" --version
+          echo "Menggunakan: $SDKMANAGER"
+          bash "$SDKMANAGER" --version
 
       - name: Accept Android SDK licenses
         shell: bash
         run: |
-          set -o pipefail
-          yes | "$SDKMANAGER" --licenses || true
+          set +e
+          yes | bash "$SDKMANAGER" --licenses
+          LICENSE_STATUS=${PIPESTATUS[1]}
+          set -e
+          if [ "$LICENSE_STATUS" -ne 0 ]; then
+            echo "Peringatan: proses penerimaan lisensi mengembalikan kode $LICENSE_STATUS"
+          fi
 
       - name: Install required Android SDK packages
         shell: bash
         run: |
           set -euo pipefail
-          "$SDKMANAGER" --install \
+          bash "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
@@ -69,8 +73,8 @@ jobs:
           test -f dlms_work.zip || { echo "dlms_work.zip tidak ditemukan di root repository"; exit 1; }
           mkdir -p extracted
           unzip -oq dlms_work.zip -d extracted
-          PROJECT_DIR="$(find extracted -mindepth 1 -maxdepth 4 -type f -name settings.gradle.kts -printf '%h\n' | head -n 1)"
-          test -n "$PROJECT_DIR" || { echo "settings.gradle.kts tidak ditemukan dalam ZIP"; find extracted -maxdepth 5 -type f; exit 1; }
+          PROJECT_DIR="$(find extracted -mindepth 1 -maxdepth 5 -type f -name settings.gradle.kts -printf '%h\\n' | head -n 1)"
+          test -n "$PROJECT_DIR" || { echo "settings.gradle.kts tidak ditemukan dalam ZIP"; find extracted -maxdepth 6 -type f; exit 1; }
           test -f "$PROJECT_DIR/app/build.gradle.kts" || { echo "app/build.gradle.kts tidak ditemukan"; exit 1; }
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Project directory: $PROJECT_DIR"
