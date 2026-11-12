@@ -10,8 +10,13 @@ on:
 permissions:
   contents: read
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   build:
+    name: Build DLMS Mini Equalizer
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -23,30 +28,57 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      # Use the SDK already installed on the GitHub-hosted runner.
+      # Do not use android-actions/setup-android@v3 here: its setup step
+      # can request the obsolete SDK package named "tools".
+      - name: Locate Android SDK manager
+        shell: bash
         run: |
-          sdkmanager --install "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          yes | sdkmanager --licenses || true
+          set -euo pipefail
+          test -d "$ANDROID_HOME" || { echo "Android SDK not found: $ANDROID_HOME"; exit 1; }
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager tidak ditemukan di $ANDROID_HOME/cmdline-tools"
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager 2>/dev/null || true
+            exit 1
+          fi
+          chmod +x "$SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
+          "$SDKMANAGER" --version
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: |
+          set -o pipefail
+          yes | "$SDKMANAGER" --licenses || true
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Extract Android project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dlms_work.zip || { echo "dlms_work.zip tidak ditemukan di root repository"; exit 1; }
+          mkdir -p extracted
+          unzip -oq dlms_work.zip -d extracted
+          PROJECT_DIR="$(find extracted -mindepth 1 -maxdepth 4 -type f -name settings.gradle.kts -printf '%h\n' | head -n 1)"
+          test -n "$PROJECT_DIR" || { echo "settings.gradle.kts tidak ditemukan dalam ZIP"; find extracted -maxdepth 5 -type f; exit 1; }
+          test -f "$PROJECT_DIR/app/build.gradle.kts" || { echo "app/build.gradle.kts tidak ditemukan"; exit 1; }
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-
-      - name: Extract project ZIP
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f dlms_work.zip || { echo 'dlms_work.zip tidak ditemukan di root repository'; exit 1; }
-          mkdir -p extracted
-          unzip -oq dlms_work.zip -d extracted
-          PROJECT_DIR="$(find extracted -mindepth 1 -maxdepth 3 -name settings.gradle.kts -printf '%h\n' | head -n 1)"
-          test -n "$PROJECT_DIR" || { echo 'settings.gradle.kts tidak ditemukan dalam ZIP'; find extracted -maxdepth 5 -type f; exit 1; }
-          test -f "$PROJECT_DIR/app/build.gradle.kts"
-          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
       - name: Generate Gradle wrapper
         working-directory: ${{ env.PROJECT_DIR }}
@@ -58,9 +90,14 @@ jobs:
 
       - name: Verify APK
         working-directory: ${{ env.PROJECT_DIR }}
-        run: test -s app/build/outputs/apk/debug/app-debug.apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK" || { echo "APK tidak ditemukan atau kosong"; find app/build/outputs -type f 2>/dev/null || true; exit 1; }
+          ls -lh "$APK"
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: DLMS-Mini-Equalizer-debug
