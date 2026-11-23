@@ -1,7 +1,7 @@
 {
   "versionCode": 13,
   "versionName": "3.2",
-  "minVersionCode": 11,
+  "minVersionCode": 13,
   "apkUrl": "https://github.com/PEMILIK/REPO/releases/download/v3.1/DLMS-Mini-Equalizer.apk",
   "notes": "Perbaikan stabilitas dan fitur baru.",
   "message": "tes"
